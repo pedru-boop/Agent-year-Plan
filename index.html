@@ -338,11 +338,12 @@ function longestConsecutiveStreak(qResults){
   return best;
 }
 
-function computeMonthlyPacing(entries, year, goalFYC, startMonth){
+function computeMonthlyPacing(entries, year, goalFYC, startMonth, endMonth){
   // เป้าหมายรายเดือน = ค่าคงที่เสมอ (เป้ารวม ÷ จำนวนเดือนในแผน) ไม่เปลี่ยนแปลงตามผลงานจริง
-  // เดือนก่อนเดือนเริ่มแผน (startMonth) ไม่นับในแผนนี้ (excluded) — ถ้าเปลี่ยนเป้า/เดือนเริ่มใหม่ระหว่างปี เดือนที่ผ่านไปแล้วจะไม่ถูกแก้ย้อนหลัง
+  // เดือนนอกช่วง [startMonth, endMonth] ไม่นับในแผนนี้ (excluded) — ถ้าเปลี่ยนเป้า/ช่วงใหม่ระหว่างปี เดือนที่ผ่านไปแล้วจะไม่ถูกแก้ย้อนหลัง
   const sm = startMonth || 0;
-  const totalMonthsInPlan = 12 - sm;
+  const em = (endMonth===undefined || endMonth===null) ? 11 : endMonth;
+  const totalMonthsInPlan = Math.max(0, em - sm + 1);
   const baseline = totalMonthsInPlan > 0 ? goalFYC / totalMonthsInPlan : 0;
   const monthActual = [0,1,2,3,4,5,6,7,8,9,10,11].map(m=>{
     const list = entries.filter(e=>{ const d=new Date(e.date); return d.getFullYear()===year && d.getMonth()===m; });
@@ -350,7 +351,7 @@ function computeMonthlyPacing(entries, year, goalFYC, startMonth){
   });
   const months = [];
   for (let m=0; m<12; m++){
-    if (m < sm){
+    if (m < sm || m > em){
       months.push({ year, month:m, target:null, excluded:true, actual: monthActual[m].actual, count: monthActual[m].count });
     } else {
       months.push({ year, month:m, target: baseline, actual: monthActual[m].actual, count: monthActual[m].count });
@@ -364,7 +365,7 @@ const DEFAULT_STATE = {
   entries: [],
   persistQuarterly: {},
   competitions: { firstSaleDate: "" },
-  goals: { targetFYC: 300000, startMonth: 0 },
+  goals: { targetFYC: 300000, startMonth: 0, endMonth: 11 },
 };
 let state = loadState();
 let activeTab = "goals";
@@ -495,17 +496,19 @@ function renderDateInput(id, isoValue, compact){
 function renderGoalsTab(){
   const goalFYC = state.goals.targetFYC ?? 0;
   const startMonth = state.goals.startMonth ?? 0;
+  const endMonth = state.goals.endMonth ?? 11;
   const now = new Date();
   const isCurrentYear = selYear === now.getFullYear();
   const currentMonthIdx = now.getMonth();
-  const pacing = goalFYC>0 ? computeMonthlyPacing(state.entries, selYear, goalFYC, startMonth) : null;
-  const yearEntries = getYearEntries().filter(e => new Date(e.date).getMonth() >= startMonth);
+  const pacing = goalFYC>0 ? computeMonthlyPacing(state.entries, selYear, goalFYC, startMonth, endMonth) : null;
+  const yearEntries = getYearEntries().filter(e => { const m = new Date(e.date).getMonth(); return m >= startMonth && m <= endMonth; });
   const achieved = yearEntries.reduce((s,e)=>s+e.fyc,0);
   const remaining = Math.max(0, goalFYC-achieved);
   const progressPct = goalFYC>0 ? Math.max(0,Math.min(100,(achieved/goalFYC)*100)) : 0;
-  // "จากนี้" อ้างอิงปฏิทินจริงเสมอ: ถ้าดูปีปัจจุบัน ใช้เดือนปัจจุบันจริง, ปีอื่นไม่มี "จากนี้" ที่มีความหมาย
+  // "จากนี้" อ้างอิงปฏิทินจริงเสมอ: ถ้าดูปีปัจจุบัน ใช้เดือนปัจจุบันจริง (แต่ไม่เกินเดือนสิ้นสุดแผน), ปีอื่นไม่มี "จากนี้" ที่มีความหมาย
   const effectiveMonthIdx = isCurrentYear ? Math.max(currentMonthIdx, startMonth) : null;
-  const monthsLeftFromNow = effectiveMonthIdx!==null ? (12 - effectiveMonthIdx) : 0;
+  const planEnded = effectiveMonthIdx !== null && effectiveMonthIdx > endMonth;
+  const monthsLeftFromNow = (effectiveMonthIdx!==null && !planEnded) ? (endMonth - effectiveMonthIdx + 1) : 0;
   const avgMonthlyTargetNow = monthsLeftFromNow>0 ? remaining/monthsLeftFromNow : 0;
 
   const ringR = 44, ringC = 2*Math.PI*ringR;
@@ -524,8 +527,8 @@ function renderGoalsTab(){
         </tr>`;
         return;
       }
-      // คอลัมน์ 3-4 โชว์เฉพาะเดือนปัจจุบัน+อนาคต (อ้างอิงปฏิทินจริง) เดือนที่ผ่านไปแล้วปล่อยว่าง
-      const isCurrentOrFuture = isCurrentYear ? (i >= effectiveMonthIdx) : false;
+      // คอลัมน์ 3-4 โชว์เฉพาะเดือนปัจจุบัน+อนาคต จนถึงเดือนสิ้นสุดแผน (อ้างอิงปฏิทินจริง) เดือนที่ผ่านไปแล้ว/เกินแผนปล่อยว่าง
+      const isCurrentOrFuture = (isCurrentYear && !planEnded) ? (i >= effectiveMonthIdx) : false;
       const isNow = isCurrentYear && i===currentMonthIdx;
       monthRows += `<tr style="${isNow?'background:#4FAE7414;':''}">
         <td style="font-weight:${isNow?700:500};color:${isNow?'var(--navy-deep)':'var(--ink)'}">${THAI_MONTH_SHORT[m.month]}${isNow?' ⚡':''}</td>
@@ -549,22 +552,27 @@ function renderGoalsTab(){
     <td class="num" colspan="2">${netHtml}</td>
   </tr>` : "";
 
-  const monthOptions = THAI_MONTH_NAMES.map((name,i)=>
+  const startMonthOptions = THAI_MONTH_NAMES.map((name,i)=>
     `<option value="${i}" ${i===startMonth?"selected":""}>${name}</option>`).join("");
+  const endMonthOptions = THAI_MONTH_NAMES.map((name,i)=>
+    `<option value="${i}" ${i===endMonth?"selected":""} ${i<startMonth?"disabled":""}>${name}</option>`).join("");
 
   return `
     <div class="card dark">
       <div class="grid-bg"></div>
       <div style="position:relative;">
         <h3>🎯 ตั้งเป้าหมายรายได้ประจำปี</h3>
-        <p class="sub">ระบุเป้าหมาย FYC ที่ต้องการและเดือนที่เริ่มนับ เป้าหมายรายเดือนจะคงที่เท่ากันทุกเดือนจากยอดนี้ — ถ้าเปลี่ยนเป้า/เดือนเริ่มใหม่ระหว่างปี เดือนที่ผ่านไปแล้วจะไม่ถูกแก้ย้อนหลัง</p>
+        <p class="sub">ระบุเป้าหมาย FYC ที่ต้องการและช่วงเดือนที่ต้องการ (จะตั้งเป็นเป้าทั้งปีหรือตั้งเป็นช่วงๆ ก็ได้) เป้าหมายรายเดือนจะคงที่เท่ากันทุกเดือนในช่วงนั้น — ถ้าเปลี่ยนเป้า/ช่วงใหม่ระหว่างปี เดือนที่ผ่านไปแล้วจะไม่ถูกแก้ย้อนหลัง</p>
         <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px;">
           <label class="field dark" style="max-width:320px;flex:1;min-width:200px;"><span>เป้าหมาย FYC (บาท)</span>
             <input type="text" inputmode="decimal" id="goal-fyc-input" value="${esc(goalsFycInput)}"
               style="background:#123F6B99;color:#fff;border-color:#ffffff33;font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;">
           </label>
-          <label class="field dark" style="max-width:220px;flex:1;min-width:160px;"><span>เริ่มนับเป้าหมายตั้งแต่เดือน</span>
-            <select id="goal-start-month" style="background:#123F6B99;color:#fff;border-color:#ffffff33;">${monthOptions}</select>
+          <label class="field dark" style="max-width:220px;flex:1;min-width:160px;"><span>เริ่มนับตั้งแต่เดือน</span>
+            <select id="goal-start-month" style="background:#123F6B99;color:#fff;border-color:#ffffff33;">${startMonthOptions}</select>
+          </label>
+          <label class="field dark" style="max-width:220px;flex:1;min-width:160px;"><span>สิ้นสุดที่เดือน</span>
+            <select id="goal-end-month" style="background:#123F6B99;color:#fff;border-color:#ffffff33;">${endMonthOptions}</select>
           </label>
         </div>
         <div class="goal-flex">
@@ -580,10 +588,10 @@ function renderGoalsTab(){
             <div class="center"><span class="pct">${Math.round(progressPct)}%</span><span class="lbl">ของเป้า</span></div>
           </div>
           <div style="flex:1;min-width:220px;">
-            <div class="tech-row"><span class="lab">เป้าหมาย FYC (ตั้งแต่ ${THAI_MONTH_NAMES[startMonth]})</span><span class="val">${THB(goalFYC)} บาท</span></div>
+            <div class="tech-row"><span class="lab">เป้าหมาย FYC (${THAI_MONTH_NAMES[startMonth]} – ${THAI_MONTH_NAMES[endMonth]})</span><span class="val">${THB(goalFYC)} บาท</span></div>
             <div class="tech-row"><span class="lab">ทำได้แล้ว</span><span class="val good">${THB(achieved)} บาท</span></div>
             <div class="tech-row"><span class="lab">ยังขาดอีก</span><span class="val ${remaining>0?'warn':''}">${THB(remaining)} บาท</span></div>
-            <div class="tech-row"><span class="lab">เฉลี่ยต่อเดือนที่ต้องทำ (นับจากนี้)</span><span class="val highlight">${THB(avgMonthlyTargetNow)} บาท/เดือน</span></div>
+            <div class="tech-row"><span class="lab">เฉลี่ยต่อเดือนที่ต้องทำ (นับจากนี้)</span><span class="val highlight">${planEnded ? 'สิ้นสุดแผนแล้ว' : THB(avgMonthlyTargetNow)+' บาท/เดือน'}</span></div>
           </div>
         </div>
       </div>
@@ -591,7 +599,7 @@ function renderGoalsTab(){
 
     <div class="card">
       <h3>เป้าหมายรายเดือน</h3>
-      <p class="sub">"เป้าหมาย" คงที่เท่ากันทุกเดือน (เป้ารวม ÷ จำนวนเดือนในแผน) · "คงเหลือถึงเป้า" และ "เฉลี่ย/เดือนจากนี้" อ้างอิงเดือนปัจจุบันตามปฏิทินจริงเท่านั้น (โชว์เฉพาะเดือนปัจจุบันเป็นต้นไป เดือนที่ผ่านไปแล้วเว้นว่างไว้)</p>
+      <p class="sub">"เป้าหมาย" คงที่เท่ากันทุกเดือนในช่วงที่ตั้งไว้ (เป้ารวม ÷ จำนวนเดือนในแผน) · "คงเหลือถึงเป้า" และ "เฉลี่ย/เดือนจากนี้" อ้างอิงเดือนปัจจุบันตามปฏิทินจริงเท่านั้น (โชว์เฉพาะเดือนปัจจุบันจนถึงเดือนสิ้นสุดแผน)</p>
       ${pacing ? `<div style="overflow-x:auto"><table>
         <thead><tr><th>เดือน</th><th style="text-align:right">เป้าหมาย (บาท)</th><th style="text-align:right">ทำได้จริง (บาท)</th><th style="text-align:right">คงเหลือถึงเป้า</th><th style="text-align:right">เฉลี่ย/เดือนจากนี้</th></tr></thead>
         <tbody>${monthRows}${totalRow}</tbody>
@@ -714,7 +722,8 @@ function renderCompetitionsTab(){
 
   const goalFYC = state.goals.targetFYC ?? 0;
   const goalStartMonth = state.goals.startMonth ?? 0;
-  const pacing = goalFYC>0 ? computeMonthlyPacing(entries, selYear, goalFYC, goalStartMonth) : null;
+  const goalEndMonth = state.goals.endMonth ?? 11;
+  const pacing = goalFYC>0 ? computeMonthlyPacing(entries, selYear, goalFYC, goalStartMonth, goalEndMonth) : null;
 
   // Joining bonus
   const startDate = state.competitions.firstSaleDate;
@@ -917,7 +926,16 @@ function bindEvents(){
   const goalStartMonth = document.getElementById("goal-start-month");
   if (goalStartMonth){
     goalStartMonth.onchange = (e)=>{
-      state.goals.startMonth = Number(e.target.value);
+      const newStart = Number(e.target.value);
+      state.goals.startMonth = newStart;
+      if ((state.goals.endMonth ?? 11) < newStart) state.goals.endMonth = newStart;
+      saveState(); render();
+    };
+  }
+  const goalEndMonth = document.getElementById("goal-end-month");
+  if (goalEndMonth){
+    goalEndMonth.onchange = (e)=>{
+      state.goals.endMonth = Number(e.target.value);
       saveState(); render();
     };
   }
