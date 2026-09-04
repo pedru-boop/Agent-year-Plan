@@ -1487,7 +1487,14 @@ function bindEvents(){
         if (!ok) return;
         state.entries = state.entries.filter(e=>e.policyId!==target.policyId);
       } else {
+        const ok = confirm(`ลบรายการผลงานวันที่ ${target.date} จำนวน ${THB(target.fyc)} บาท ใช่ไหม? (ลบแล้วกู้คืนไม่ได้ นอกจากนำเข้าไฟล์แบ็กอัพ)`);
+        if (!ok) return;
         state.entries = state.entries.filter(e=>e.id!==id);
+      }
+      // ถ้าลบจนไม่เหลือผลงานเลย แต่ยังมี "วันที่มีผลงานขึ้นแรก" ผูกอยู่ ถามว่าจะล้างด้วยไหม เพราะฟิลด์นี้ไม่ได้ผูกกับ entries โดยตรง จึงไม่หายไปเองอัตโนมัติ
+      if (state.entries.length===0 && state.competitions?.firstSaleDate){
+        const clear = confirm(`ไม่มีผลงานเหลือแล้ว แต่ยังมี "วันที่มีผลงานขึ้นแรก" ผูกอยู่ ต้องการล้างข้อมูลนี้ด้วยไหม?`);
+        if (clear) state.competitions.firstSaleDate = "";
       }
       saveState(); render();
     };
