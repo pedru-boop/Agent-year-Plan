@@ -135,7 +135,7 @@
   .cal-grid button.day.empty{color:transparent; cursor:default;}
   .backup-row{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
   footer.bottom{text-align:center; padding:18px 0 34px; color:var(--muted); font-size:17.25px;}
-  #toast{position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--navy-deep); color:#fff; padding:10px 18px; border-radius:8px; font-size:21px; display:none; z-index:100;}
+  #toast{position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--navy-deep); color:#fff; padding:10px 18px; border-radius:8px; font-size:21px; display:none; align-items:center; z-index:100; max-width:90vw;}
   @media (max-width:640px){
     form.entry-form{grid-template-columns:1fr;}
     .qgrid{grid-template-columns:1fr;}
@@ -502,9 +502,42 @@ function saveState(){
 }
 function showToast(msg){
   const t=document.getElementById("toast");
-  t.textContent=msg; t.style.display="block";
+  t.innerHTML = esc(msg);
+  t.style.display="flex";
   clearTimeout(showToast._h);
   showToast._h=setTimeout(()=>{t.style.display="none";},2600);
+}
+let pendingUndo = null; // { commit, restore, timeoutId }
+function showUndoToast(message, commitFn, restoreFn){
+  // ถ้ามีรายการที่รอ undo ค้างอยู่ก่อนหน้า ให้ commit อันเก่าไปก่อน (ยืนยันการลบเดิม) แล้วค่อยเริ่มรายการใหม่
+  if (pendingUndo){ clearTimeout(pendingUndo.timeoutId); pendingUndo.commit(); }
+  const t = document.getElementById("toast");
+  let secondsLeft = 5;
+  const redrawToast = ()=>{
+    t.innerHTML = `<span>${esc(message)} (${secondsLeft})</span><button id="toast-undo-btn" style="margin-left:12px;background:var(--gold);border:none;color:#fff;padding:4px 12px;border-radius:6px;font-size:17px;cursor:pointer;">เลิกทำ</button>`;
+    const btn = document.getElementById("toast-undo-btn");
+    if (btn) btn.onclick = ()=>{
+      clearInterval(tickId);
+      clearTimeout(timeoutId);
+      t.style.display = "none";
+      pendingUndo = null;
+      restoreFn();
+      render();
+    };
+  };
+  t.style.display="flex";
+  redrawToast();
+  const tickId = setInterval(()=>{
+    secondsLeft -= 1;
+    if (secondsLeft>0) redrawToast();
+  }, 1000);
+  const timeoutId = setTimeout(()=>{
+    clearInterval(tickId);
+    t.style.display="none";
+    pendingUndo = null;
+    commitFn();
+  }, 5000);
+  pendingUndo = { commit: ()=>{ clearInterval(tickId); clearTimeout(timeoutId); t.style.display="none"; commitFn(); }, restore: restoreFn, timeoutId };
 }
 function formatThousands(raw){
   if (raw === "") return "";
@@ -1369,6 +1402,10 @@ function bindEvents(){
   document.querySelectorAll("[data-remove-training]").forEach(el=>{
     el.onclick = ()=>{
       const idx = Number(el.dataset.removeTraining);
+      const t = state.license.trainings[idx];
+      if (!t) return;
+      const ok = confirm(`ลบประวัติการอบรม "${t.courseName}" ใช่ไหม?`);
+      if (!ok) return;
       state.license.trainings.splice(idx,1);
       saveState(); render();
     };
@@ -1474,29 +1511,37 @@ function bindEvents(){
   });
   document.querySelectorAll('[data-edit-field="note"]').forEach(inp=>{ inp.oninput=(e)=>{editDraft.note=e.target.value;}; inp.onfocus=(e)=>e.target.select(); });
   document.querySelectorAll('[data-edit-field="fyc"]').forEach(inp=>{ inp.oninput=(e)=>{editDraft.fyc=formatThousands(stripCommas(e.target.value)); e.target.value=editDraft.fyc;}; inp.onfocus=(e)=>e.target.select(); });
+  function checkClearRelatedFields(){
+    if (state.entries.length>0) return;
+    if (!state.competitions?.firstSaleDate) return;
+    const clear = confirm(`ไม่มีผลงานเหลือแล้ว แต่ยังมี "วันที่มีผลงานขึ้นแรก" ผูกอยู่ ต้องการล้างข้อมูลนี้ด้วยไหม?`);
+    if (clear){ state.competitions.firstSaleDate = ""; saveState(); render(); }
+  }
   document.querySelectorAll("[data-remove]").forEach(btn=>{
     btn.onclick = ()=>{
       const id = Number(btn.dataset.remove);
-      const target = state.entries.find(e=>e.id===id);
+      const entriesArr = state.entries;
+      const target = entriesArr.find(e=>e.id===id);
       if (!target) return;
       const isOriginInstallment = (target.installmentIndex ?? 0) === 0;
       const hasSiblings = (target.installmentTotal ?? 1) > 1;
       if (isOriginInstallment && hasSiblings){
-        const siblingCount = state.entries.filter(e=>e.policyId===target.policyId).length;
-        const ok = confirm(`รายการนี้เป็นงวดแรกของแผนผ่อนชำระ ${siblingCount} งวด ถ้าลบจะลบงวดที่เหลือทั้งหมดไปด้วย (ไม่งั้นงวดหลังจะค้างอยู่โดยไม่มีต้นฉบับ) ต้องการลบทั้งชุดใช่ไหม?`);
-        if (!ok) return;
-        state.entries = state.entries.filter(e=>e.policyId!==target.policyId);
+        const removed = entriesArr.map((e,i)=>({e,i})).filter(x=>x.e.policyId===target.policyId);
+        state.entries = entriesArr.filter(e=>e.policyId!==target.policyId);
+        render();
+        showUndoToast(`ลบแผนผ่อนชำระ ${removed.length} งวดแล้ว`,
+          ()=>{ checkClearRelatedFields(); saveState(); render(); },
+          ()=>{ const arr = state.entries; removed.forEach(r=>arr.splice(r.i,0,r.e)); }
+        );
       } else {
-        const ok = confirm(`ลบรายการผลงานวันที่ ${target.date} จำนวน ${THB(target.fyc)} บาท ใช่ไหม? (ลบแล้วกู้คืนไม่ได้ นอกจากนำเข้าไฟล์แบ็กอัพ)`);
-        if (!ok) return;
-        state.entries = state.entries.filter(e=>e.id!==id);
+        const idx = entriesArr.indexOf(target);
+        state.entries = entriesArr.filter(e=>e.id!==id);
+        render();
+        showUndoToast(`ลบรายการวันที่ ${target.date} จำนวน ${THB(target.fyc)} แล้ว`,
+          ()=>{ checkClearRelatedFields(); saveState(); render(); },
+          ()=>{ state.entries.splice(idx,0,target); }
+        );
       }
-      // ถ้าลบจนไม่เหลือผลงานเลย แต่ยังมี "วันที่มีผลงานขึ้นแรก" ผูกอยู่ ถามว่าจะล้างด้วยไหม เพราะฟิลด์นี้ไม่ได้ผูกกับ entries โดยตรง จึงไม่หายไปเองอัตโนมัติ
-      if (state.entries.length===0 && state.competitions?.firstSaleDate){
-        const clear = confirm(`ไม่มีผลงานเหลือแล้ว แต่ยังมี "วันที่มีผลงานขึ้นแรก" ผูกอยู่ ต้องการล้างข้อมูลนี้ด้วยไหม?`);
-        if (clear) state.competitions.firstSaleDate = "";
-      }
-      saveState(); render();
     };
   });
 
