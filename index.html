@@ -529,7 +529,7 @@ function addMonthsToDate(dateStr, n){
 function buildInstallmentSchedule(modeValue, perInstallmentFyc){
   if (modeValue === "monthly"){
     const list = [{offset:0, amount:perInstallmentFyc}];
-    for (let m=2; m<=11; m++) list.push({offset:m, amount: Math.round((perInstallmentFyc/2)*100)/100});
+    for (let m=2; m<=11; m++) list.push({offset:m, amount: Math.round(perInstallmentFyc/2)});
     return list;
   }
   const mode = BILLING_MODES.find(m=>m.value===modeValue) || BILLING_MODES[0];
@@ -1229,7 +1229,7 @@ function renderCompetitionsTab(){
       const ovKey = `${selYear}-${monthIdx}`;
       const ov = fycOverrides[ovKey];
       const isOv = ov!==undefined && ov!==null;
-      const displayFyc = isOv ? ov : m.fyc;
+      const displayFyc = Math.round(isOv ? ov : m.fyc);
       qFycSum += displayFyc;
       const hit = pmActive ? displayFyc>=pm.target : null;
       if (pmActive){ qTargetSum += pm.target; qHasTarget = true; }
