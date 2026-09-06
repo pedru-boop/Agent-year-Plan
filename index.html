@@ -511,6 +511,11 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 
 function isOrigin(e){ return (e.installmentIndex ?? 0) === 0; }
 
+function todayIso(){
+  // ห้ามใช้ toISOString() ตรงๆ กับเวลาปัจจุบัน เพราะจะแปลงเป็น UTC ทำให้ก่อน 7 โมงเช้า (เวลาไทย) วันที่เพี้ยนไปเป็นเมื่อวาน
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;
+}
 function addMonthsToDate(dateStr, n){
   const d = new Date(dateStr + "T00:00:00");
   const day = d.getDate();
@@ -518,7 +523,7 @@ function addMonthsToDate(dateStr, n){
   d.setMonth(d.getMonth()+n);
   const lastDay = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
   d.setDate(Math.min(day, lastDay));
-  return d.toISOString().slice(0,10);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 
 function buildInstallmentSchedule(modeValue, perInstallmentFyc){
@@ -598,7 +603,7 @@ const DEFAULT_STATE = {
 let state = loadState();
 let activeTab = "goals";
 let selYear = new Date().getFullYear();
-let entryForm = { date: new Date().toISOString().slice(0,10), fyc: "", note: "", billing: "" };
+let entryForm = { date: todayIso(), fyc: "", note: "", billing: "" };
 let editingId = null;
 let editDraft = { date:"", fyc:"", note:"" };
 let newTrainingDraft = { courseName: "", date: "" };
@@ -750,14 +755,15 @@ function renderDateInput(id, isoValue, compact){
       const isToday = vy===t.getFullYear() && vm===t.getMonth() && d===t.getDate();
       cells += `<button type="button" class="day${isSel?' selected':''}${isToday&&!isSel?' today':''}" data-pick-day="${id}|${d}">${d}</button>`;
     }
-    const yearOptions = Array.from({length:9},(_,i)=>new Date().getFullYear()-6+i)
+    const yearOptions = Array.from({length:14},(_,i)=>new Date().getFullYear()-5+i)
       .map(y=>`<option value="${y}" ${y===vy?"selected":""}>${toBE(y)}</option>`).join("");
+    const monthOptions = THAI_MONTH_NAMES.map((mn,mi)=>`<option value="${mi}" ${mi===vm?"selected":""}>${mn}</option>`).join("");
     popHtml = `
       <div class="calendar-pop" data-cal-pop="${id}">
         <div class="cal-head">
           <button type="button" data-shift-month="${id}|-1">‹</button>
           <div class="mid">
-            <span>${THAI_MONTH_NAMES[vm]}</span>
+            <select data-month-select-cal="${id}">${monthOptions}</select>
             <select data-year-select-cal="${id}">${yearOptions}</select>
           </div>
           <button type="button" data-shift-month="${id}|1">›</button>
@@ -1138,7 +1144,7 @@ function renderCompetitionsTab(){
   const hasTrophy = achievedLevel>0;
 
   const now = new Date();
-  const currentActual = getQuarter(now.toISOString().slice(0,10));
+  const currentActual = getQuarter(todayIso());
   const isCurrentYear = selYear===currentActual.year;
   const currentMonthIdx = now.getMonth();
 
@@ -1693,7 +1699,7 @@ function bindEvents(){
     const blob = new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href=url; a.download=`ped-dashboard-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.href=url; a.download=`ped-dashboard-backup-${todayIso()}.json`;
     a.click(); URL.revokeObjectURL(url);
   };
   const importBtn = document.getElementById("btn-import-header");
@@ -1787,6 +1793,14 @@ function bindEvents(){
       e.stopPropagation();
       const id = sel.dataset.yearSelectCal;
       calState(id).viewYear = Number(sel.value);
+      render();
+    };
+  });
+  document.querySelectorAll("[data-month-select-cal]").forEach(sel=>{
+    sel.onchange = (e)=>{
+      e.stopPropagation();
+      const id = sel.dataset.monthSelectCal;
+      calState(id).viewMonth = Number(sel.value);
       render();
     };
   });
