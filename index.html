@@ -153,7 +153,7 @@
       <button id="btn-import-header" title="นำเข้าข้อมูล" style="background:#ffffff22;border:1px solid #ffffff44;border-radius:8px;padding:6px 9px;color:#fff;font-size:15px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;white-space:nowrap;">📥 โหลด</button>
       <input type="file" id="file-import-header" accept="application/json" style="display:none">
     </div>
-    <div style="position:absolute;bottom:8px;right:14px;z-index:5;color:#ffffff77;font-size:12px;font-family:monospace;">v2026.09.10-3</div>
+    <div style="position:absolute;bottom:8px;right:14px;z-index:5;color:#ffffff77;font-size:12px;font-family:monospace;">v2026.09.10-4</div>
     <div class="inner">
       <div class="brand">
         <div class="logo"><img src="icon-192.png" alt="Year Plan" style="width:100%;height:100%;object-fit:cover;border-radius:18px;"></div>
@@ -341,8 +341,8 @@ function renderInsightsSection(entries, selYearArg, pacing){
   return `<h3 style="margin:4px 0 4px;">💡 สรุปและคำแนะนำ</h3>${cards.join("")}`;
 }
 function generatePrintReport(){
-  const entries = state.entries;
-  const yearEntries = getYearEntries();
+  const entries = effectiveEntries(state.entries);
+  const yearEntries = entries.filter(e=>new Date(e.date).getFullYear()===selYear);
   const qResults = quarterlyQualifyResults(entries, selYear);
   const streak = longestConsecutiveStreak(qResults);
   const annualCases = yearEntries.filter(isOrigin).length;
@@ -516,6 +516,18 @@ const toBE = y => y + 543;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 function isOrigin(e){ return (e.installmentIndex ?? 0) === 0; }
+function effectiveEntries(entries){
+  // เอนทรีนับผลได้จริง ก็ต่อเมื่อ "งวดต้นฉบับ" ของกรมธรรม์เดียวกัน ไม่ได้ค้างสถานะรอพิจารณาอยู่
+  const originPendingMap = {};
+  entries.forEach(e=>{
+    if (isOrigin(e)) originPendingMap[e.policyId] = !!e.pending;
+  });
+  return entries.filter(e=>{
+    const key = e.policyId;
+    if (key===undefined || !(key in originPendingMap)) return !e.pending;
+    return !originPendingMap[key];
+  });
+}
 function getAgentTargetFYC(year){
   year = year ?? selYear;
   const g = state.goals;
@@ -824,15 +836,17 @@ function renderGoalsTab(){
   const now = new Date();
   const isCurrentYear = selYear === now.getFullYear();
   const currentMonthIdx = now.getMonth();
-  const pacing = (goalFYC>0 || annualGoalFYC>0) ? computeMonthlyPacing(state.entries, selYear, goalFYC, startMonth, endMonth, annualGoalFYC) : null;
-  const yearEntries = getYearEntries().filter(e => { const m = new Date(e.date).getMonth(); return m >= startMonth && m <= endMonth; });
+  const pacing = (goalFYC>0 || annualGoalFYC>0) ? computeMonthlyPacing(effectiveEntries(state.entries), selYear, goalFYC, startMonth, endMonth, annualGoalFYC) : null;
+  const yearEntries = effectiveEntries(getYearEntries()).filter(e => { const m = new Date(e.date).getMonth(); return m >= startMonth && m <= endMonth; });
   const achieved = yearEntries.reduce((s,e)=>s+e.fyc,0);
   const remaining = Math.max(0, goalFYC-achieved);
-  const progressPct = goalFYC>0 ? Math.max(0,Math.min(100,(achieved/goalFYC)*100)) : 0;
+  const progressPct = goalFYC>0 ? Math.max(0,(achieved/goalFYC)*100) : 0; // ไม่ตัดเพดาน 100%
+  const progressPctForRing = Math.min(100, progressPct);
   // ผลงานทั้งปี (ม.ค.-ธ.ค. เสมอ) แยกจากผลงานช่วงเป้าหมายพิเศษด้านบน เพื่อไม่ให้สับสนว่าเลขไหนคือขอบเขตไหน
-  const achievedFullYear = getYearEntries().reduce((s,e)=>s+e.fyc,0);
+  const achievedFullYear = effectiveEntries(getYearEntries()).reduce((s,e)=>s+e.fyc,0);
   const annualRemaining = Math.max(0, annualGoalFYC-achievedFullYear);
-  const annualProgressPct = annualGoalFYC>0 ? Math.max(0,Math.min(100,(achievedFullYear/annualGoalFYC)*100)) : 0;
+  const annualProgressPct = annualGoalFYC>0 ? Math.max(0,(achievedFullYear/annualGoalFYC)*100) : 0; // ไม่ตัดเพดาน 100%
+  const annualProgressPctForRing = Math.min(100, annualProgressPct);
   // "จากนี้" อ้างอิงปฏิทินจริงเสมอ: ถ้าดูปีปัจจุบัน ใช้เดือนปัจจุบันจริง (แต่ไม่เกินเดือนสิ้นสุดแผน), ปีอื่นไม่มี "จากนี้" ที่มีความหมาย
   const effectiveMonthIdx = isCurrentYear ? Math.max(currentMonthIdx, startMonth) : null;
   const planEnded = effectiveMonthIdx !== null && effectiveMonthIdx > endMonth;
@@ -840,8 +854,8 @@ function renderGoalsTab(){
   const avgMonthlyTargetNow = monthsLeftFromNow>0 ? remaining/monthsLeftFromNow : 0;
 
   const ringR = 44, ringC = 2*Math.PI*ringR;
-  const ringOffset = ringC - (progressPct/100)*ringC;
-  const annualRingOffset = ringC - (annualProgressPct/100)*ringC;
+  const ringOffset = ringC - (progressPctForRing/100)*ringC;
+  const annualRingOffset = ringC - (annualProgressPctForRing/100)*ringC;
 
   let monthRows = "";
   if (pacing){
@@ -1018,7 +1032,7 @@ function renderGoalsTab(){
       </div>
     </div>
 
-    ${renderInsightsSection(state.entries, selYear, pacing)}
+    ${renderInsightsSection(effectiveEntries(state.entries), selYear, pacing)}
 
     <div class="card">
       <h3>เป้าหมายรายเดือน</h3>
@@ -1058,10 +1072,11 @@ function billingModeOf(e){
   return "annual";
 }
 function renderEntryTab(){
-  const entries = getYearEntries();
+  const entries = getYearEntries(); // ทั้งหมด รวมที่รอพิจารณาด้วย — ใช้แสดงตารางครบทุกแถว
+  const effEntries = effectiveEntries(entries); // เฉพาะที่นับผลจริงแล้ว — ใช้สรุปยอดด้านบน
   const sorted = [...entries].sort((a,b)=>new Date(b.date)-new Date(a.date));
-  const totalFYC = entries.reduce((s,e)=>s+e.fyc,0);
-  const originCount = entries.filter(isOrigin).length;
+  const totalFYC = effEntries.reduce((s,e)=>s+e.fyc,0);
+  const originCount = effEntries.filter(isOrigin).length;
 
   const previewHtml = renderBillingPreviewHtml();
 
@@ -1087,6 +1102,10 @@ function renderEntryTab(){
       <td></td>
       <td></td>
     </tr>`;
+    // เช็คสถานะ "รอพิจารณา" ที่แท้จริงของแต่ละงวด — งวดต่อเนื่องอิงตามงวดต้นฉบับเสมอ (ไม่มีสถานะของตัวเอง)
+    const originPendingLookup = {};
+    state.entries.forEach(en=>{ if (isOrigin(en)) originPendingLookup[en.policyId] = !!en.pending; });
+    const effectivePendingOf = (en)=> (en.policyId in originPendingLookup) ? originPendingLookup[en.policyId] : !!en.pending;
     rows = `<div style="overflow-x:auto"><table>
       <thead><tr><th>วันที่</th><th>หมายเหตุ</th><th style="text-align:right">รายปี</th><th style="text-align:right">ราย 6 เดือน</th><th style="text-align:right">ราย 3 เดือน</th><th style="text-align:right">รายเดือน</th><th style="text-align:center">อนุมัติ</th><th></th></tr></thead>
       <tbody>${filtered.map(e=>{
@@ -1105,14 +1124,17 @@ function renderEntryTab(){
         const bMode = billingModeOf(e);
         const cell = (match) => match===bMode ? `<td class="num">${THB(e.fyc)}</td>` : `<td class="num" style="color:var(--muted);">—</td>`;
         const origin = isOrigin(e);
-        return `<tr style="${e.pending?'background:#FBF6E844;':''}">
-          <td style="${origin?'color:var(--navy);font-weight:600;':''}${e.pending?'opacity:0.7;':''}">${new Date(e.date).toLocaleDateString("th-TH",{day:"numeric",month:"long",year:"numeric"})}</td>
+        const effPending = effectivePendingOf(e);
+        return `<tr style="${effPending?'background:#FBF6E844;':''}">
+          <td style="${origin?'color:var(--navy);font-weight:600;':''}${effPending?'opacity:0.7;':''}">${new Date(e.date).toLocaleDateString("th-TH",{day:"numeric",month:"long",year:"numeric"})}</td>
           <td style="color:var(--muted)">${esc(e.note)||"—"}</td>
           ${cell("annual")}${cell("semiannual")}${cell("quarterly")}${cell("monthly")}
           <td style="text-align:center;">
-            ${e.pending
-              ? `<button class="icon-btn" data-approve-entry="${e.id}" title="แตะเพื่ออนุมัติ (จะตั้งวันที่เป็นวันนี้ = วันที่อนุมัติ)" style="color:var(--muted);font-size:20px;">⭕</button>`
-              : `<button class="icon-btn" data-cancel-approve="${e.id}" title="อนุมัติแล้ว — แตะเพื่อยกเลิก (กลับเป็นรอพิจารณา คืนวันที่เดิม)" style="color:var(--good);font-size:20px;">✅</button>`}
+            ${!origin
+              ? `<span style="color:var(--muted);font-size:16px;" title="งวดต่อเนื่อง — อิงสถานะตามงวดต้นฉบับ ไม่ต้องอนุมัติแยก">${effPending?'⋯':'—'}</span>`
+              : e.pending
+                ? `<button class="icon-btn" data-approve-entry="${e.id}" title="แตะเพื่ออนุมัติ (จะตั้งวันที่เป็นวันนี้ = วันที่อนุมัติ)" style="color:var(--muted);font-size:20px;">⭕</button>`
+                : `<button class="icon-btn" data-cancel-approve="${e.id}" title="อนุมัติแล้ว — แตะเพื่อยกเลิก (กลับเป็นรอพิจารณา คืนวันที่เดิม)" style="color:var(--good);font-size:20px;">✅</button>`}
           </td>
           <td style="text-align:right;white-space:nowrap;">
             <button class="icon-btn" data-start-edit="${e.id}" title="แก้ไข">✏️</button>
@@ -1171,8 +1193,8 @@ function renderEntryTab(){
 
 /* ================= COMPETITIONS TAB ================= */
 function renderCompetitionsTab(){
-  const entries = state.entries;
-  const yearEntries = getYearEntries();
+  const entries = effectiveEntries(state.entries);
+  const yearEntries = entries.filter(e=>new Date(e.date).getFullYear()===selYear);
   const qResults = quarterlyQualifyResults(entries, selYear);
   const streak = longestConsecutiveStreak(qResults);
   const annualCases = yearEntries.filter(isOrigin).length;
@@ -1995,7 +2017,7 @@ function submitEntry(){
     fyc: s.amount,
     note: n>1 ? `${baseNote}${baseNote?" ":""}(${installmentLabel(entryForm.billing, i, n)})` : baseNote,
     policyId, installmentIndex:i, installmentTotal:n, billingMode: entryForm.billing,
-    pending: true, // ทุกรายการที่คีย์ใหม่ ขึ้นเป็น "รอพิจารณา" อัตโนมัติเสมอ จนกว่าจะกดอนุมัติ
+    ...(i===0 ? { pending: true } : {}), // เฉพาะงวดต้นฉบับที่มีสถานะรอพิจารณาของตัวเอง งวดต่อเนื่องอื่นๆ อิงตามงวดต้นฉบับเสมอ ไม่มีสถานะแยกของตัวเอง
   }));
   state.entries.push(...list);
   saveState();
