@@ -153,7 +153,7 @@
       <button id="btn-import-header" title="นำเข้าข้อมูล" style="background:#ffffff22;border:1px solid #ffffff44;border-radius:8px;padding:6px 9px;color:#fff;font-size:15px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;white-space:nowrap;">📥 โหลด</button>
       <input type="file" id="file-import-header" accept="application/json" style="display:none">
     </div>
-    <div style="position:absolute;bottom:8px;right:14px;z-index:5;color:#ffffff77;font-size:12px;font-family:monospace;">v2026.09.10-1</div>
+    <div style="position:absolute;bottom:8px;right:14px;z-index:5;color:#ffffff77;font-size:12px;font-family:monospace;">v2026.09.10-3</div>
     <div class="inner">
       <div class="brand">
         <div class="logo"><img src="icon-192.png" alt="Year Plan" style="width:100%;height:100%;object-fit:cover;border-radius:18px;"></div>
@@ -747,6 +747,9 @@ function renderTabNav(){
 function getYears(){
   const s = new Set(state.entries.map(e=>new Date(e.date).getFullYear()));
   s.add(new Date().getFullYear());
+  // เผื่อช่วงปีล่วงหน้า/ย้อนหลังไว้ตายตัว ไม่ผูกกับว่ามีผลงานอยู่แล้วหรือยัง จะได้ตั้งเป้าปีถัดไปล่วงหน้าได้ก่อนมีผลงานจริง
+  const real = new Date().getFullYear();
+  for (let y=real-2; y<=real+5; y++) s.add(y);
   return Array.from(s).sort((a,b)=>b-a);
 }
 function renderYearPicker(){
@@ -1109,7 +1112,7 @@ function renderEntryTab(){
           <td style="text-align:center;">
             ${e.pending
               ? `<button class="icon-btn" data-approve-entry="${e.id}" title="แตะเพื่ออนุมัติ (จะตั้งวันที่เป็นวันนี้ = วันที่อนุมัติ)" style="color:var(--muted);font-size:20px;">⭕</button>`
-              : `<span title="อนุมัติแล้ว" style="color:var(--good);font-size:20px;">✅</span>`}
+              : `<button class="icon-btn" data-cancel-approve="${e.id}" title="อนุมัติแล้ว — แตะเพื่อยกเลิก (กลับเป็นรอพิจารณา คืนวันที่เดิม)" style="color:var(--good);font-size:20px;">✅</button>`}
           </td>
           <td style="text-align:right;white-space:nowrap;">
             <button class="icon-btn" data-start-edit="${e.id}" title="แก้ไข">✏️</button>
@@ -1672,7 +1675,8 @@ function bindEvents(){
       if (idx<0) return;
       const original = state.entries[idx];
       const approvalDate = todayIso();
-      state.entries[idx] = { ...original, pending: false, date: approvalDate };
+      // เก็บวันที่เดิมไว้ก่อนเปลี่ยน เผื่อกดผิดจะได้ "ยกเลิกอนุมัติ" คืนค่าวันที่เดิมได้ตรงๆ
+      state.entries[idx] = { ...original, pending: false, date: approvalDate, dateBeforeApproval: original.date };
       // ถ้าเป็นงวดแรก (ต้นฉบับ) ของแผนผ่อนชำระหลายงวด งวดที่เหลือต้องขยับวันที่ตามวันอนุมัติใหม่ด้วย ไม่งั้นวันที่จะไม่ต่อเนื่องกัน
       const isOriginInstallment = (original.installmentIndex ?? 0) === 0;
       const hasSiblings = (original.installmentTotal ?? 1) > 1;
@@ -1681,7 +1685,32 @@ function bindEvents(){
         state.entries.forEach((e,i)=>{
           if (e.policyId===original.policyId && (e.installmentIndex ?? 0) > 0){
             const s = schedule[e.installmentIndex];
-            if (s) state.entries[i] = { ...e, date: addMonthsToDate(approvalDate, s.offset) };
+            if (s) state.entries[i] = { ...e, date: addMonthsToDate(approvalDate, s.offset), dateBeforeApproval: e.date };
+          }
+        });
+      }
+      saveState(); render();
+    };
+  });
+  document.querySelectorAll("[data-cancel-approve]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = Number(btn.dataset.cancelApprove);
+      const idx = state.entries.findIndex(x=>x.id===id);
+      if (idx<0) return;
+      const original = state.entries[idx];
+      const revertDate = original.dateBeforeApproval ?? original.date;
+      const reverted = { ...original, pending: true, date: revertDate };
+      delete reverted.dateBeforeApproval;
+      state.entries[idx] = reverted;
+      // งวดถัดๆ ไปที่เคยขยับวันที่ตามตอนอนุมัติ ก็คืนวันที่เดิมกลับไปด้วย ให้สอดคล้องกันเหมือนก่อนกดอนุมัติ
+      const isOriginInstallment = (original.installmentIndex ?? 0) === 0;
+      const hasSiblings = (original.installmentTotal ?? 1) > 1;
+      if (isOriginInstallment && hasSiblings){
+        state.entries.forEach((e,i)=>{
+          if (e.policyId===original.policyId && (e.installmentIndex ?? 0) > 0 && e.dateBeforeApproval){
+            const r = { ...e, date: e.dateBeforeApproval };
+            delete r.dateBeforeApproval;
+            state.entries[i] = r;
           }
         });
       }
